@@ -52,37 +52,6 @@ class GlobalVariable[T] {
   def get: T = { require(assigned); variable }
 }
 
-object GenerateConfigString {
-  def apply(p: Parameters, clint: CoreplexLocalInterrupter, plic: TLPLIC, peripheryManagers: Seq[TLManagerParameters]) = {
-    val c = CoreplexParameters()(p)
-    val res = new StringBuilder
-    res append plic.globalConfigString
-    res append clint.globalConfigString
-    res append  "core {\n"
-    for (i <- 0 until c.nTiles) { // TODO heterogeneous tiles
-      val isa = {
-        val m = if (p(MulDivKey).nonEmpty) "m" else ""
-        val a = if (p(UseAtomics)) "a" else ""
-        val f = if (p(FPUKey).nonEmpty) "f" else ""
-        val d = if (p(FPUKey).nonEmpty && p(XLen) > 32) "d" else ""
-        val s = if (c.hasSupervisor) "s" else ""
-        s"rv${p(XLen)}i$m$a$f$d$s"
-      }
-      res append s"  $i {\n"
-      res append  "    0 {\n"
-      res append s"      isa $isa;\n"
-      res append clint.hartConfigStrings(i)
-      res append plic.hartConfigStrings(i)
-      res append  "    };\n"
-      res append  "  };\n"
-    }
-    res append  "};\n"
-    peripheryManagers.foreach { manager => res append manager.dts }
-    res append '\u0000'
-    res.toString
-  }
-}
-
 object GenerateBootROM {
   def apply(p: Parameters, address: BigInt, configString: String) = {
     val romdata = Files.readAllBytes(Paths.get(p(BootROMFile)))
