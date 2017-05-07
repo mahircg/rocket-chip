@@ -13,6 +13,8 @@ case object StoreDataQueueDepth extends Field[Int]
 case object ReplayQueueDepth extends Field[Int]
 case object NMSHRs extends Field[Int]
 case object LRSCCycles extends Field[Int]
+case object UseAtomicSC extends Field [Boolean]
+case object AtomicSCPreciseRelease extends Field [Boolean]
 
 trait HasL1HellaCacheParameters extends HasL1CacheParameters {
   val wordBits = p(WordBits)
@@ -33,6 +35,9 @@ trait HasL1HellaCacheParameters extends HasL1CacheParameters {
   val nMSHRs = p(NMSHRs)
   val nIOMSHRs = 1
   val lrscCycles = p(LRSCCycles)
+  val usingAtomicSC = p(UseAtomicSC)
+  val preciseRelease = p(AtomicSCPreciseRelease) & usingAtomicSC
+  val numBlocks = (p(NSets) * p(NWays) / p(CacheBlockBytes))
 
   require(lrscCycles >= 32) // ISA requires 16-insn LRSC sequences to succeed
   require(isPow2(nSets))
@@ -781,6 +786,12 @@ class HellaCache(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   val wb = Module(new WritebackUnit)
   val prober = Module(new ProbeUnit)
   val mshrs = Module(new MSHRFile)
+
+  //Declare those parameters in nbdcache files!
+  if(usingAtomicSC) {
+    val sc_module = if(preciseRelease) Module(new ASCPreciseReleaseL1(numBlocks))
+                    else Module(new ASCLumpedReleaseL1(numBlocks))
+  }
 
   io.cpu.req.ready := Bool(true)
   val s1_valid = Reg(next=io.cpu.req.fire(), init=Bool(false))
