@@ -37,7 +37,8 @@ trait HasL1HellaCacheParameters extends HasL1CacheParameters {
   val lrscCycles = p(LRSCCycles)
   val usingAtomicSC = p(UseAtomicSC)
   val preciseRelease = p(AtomicSCPreciseRelease) & usingAtomicSC
-  val numBlocks = (p(NSets) * p(NWays) / p(CacheBlockBytes))
+  val lumpedRelease = !preciseRelease & usingAtomicSC
+  val numMutexes = (p(NSets) * p(NWays))
 
   require(lrscCycles >= 32) // ISA requires 16-insn LRSC sequences to succeed
   require(isPow2(nSets))
@@ -788,9 +789,14 @@ class HellaCache(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   val mshrs = Module(new MSHRFile)
 
   //Declare those parameters in nbdcache files!
-  if(usingAtomicSC) {
-    val sc_module = if(preciseRelease) Module(new ASCPreciseReleaseL1(numBlocks))
-                    else Module(new ASCLumpedReleaseL1(numBlocks))
+  val sc_module = if(preciseRelease) {
+    Module(new ASCPreciseReleaseL1(numMutexes))
+  }
+  else if (lumpedRelease) {
+    Module(new ASCLumpedReleaseL1(numMutexes))
+  }
+  else {
+    null
   }
 
   io.cpu.req.ready := Bool(true)
@@ -986,7 +992,9 @@ class HellaCache(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   mshrs.io.req.bits.data := s2_req.data
   when (mshrs.io.req.fire()) { replacer.miss }
   io.mem.acquire <> mshrs.io.mem_req
-
+  val iwmc_inc_en = s2_valid_masked && !s2_hit && isWrite(s2_req.cmd)
+  val iwmc_inc_en_rising = iwmc_inc_en && !Reg(next = iwmc_inc_en)
+  
   // replays
   readArb.io.in(1).valid := mshrs.io.replay.valid
   readArb.io.in(1).bits := mshrs.io.replay.bits
@@ -995,6 +1003,13 @@ class HellaCache(implicit p: Parameters) extends L1HellaCacheModule()(p) {
   s1_replay := mshrs.io.replay.valid && readArb.io.in(1).ready
   metaReadArb.io.in(1) <> mshrs.io.meta_read
   metaWriteArb.io.in(0) <> mshrs.io.meta_write
+  val iwmc_dec_en = mshrs.io.replay.valid && isWrite(mshrs.io.replay.bits.cmd)
+  val iwmc_dec_en_rising = iwmc_dec_en && !Reg(next = iwmc_dec_en)
+
+  sc_module.io.iwmc_en := iwmc_inc_en_rising || iwmc_dec_en_rising
+  sc_module.io.iwmc_inc := iwmc_inc_en_rising
+  sc_module.io.iwmc_dec := iwmc_dec_en_rising
+
 
   // probes and releases
   val releaseArb = Module(new LockingArbiter(new Release, 2, outerDataBeats, (r: Release) => r.hasMultibeatData()))
